@@ -4,12 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: "Full URL to audit:"
+        description: "Full URL to audit (e.g. https://yourdomain.com/)"
         required: true
-        default: https://patlynk.com
         type: string
       runs:
-        description: "Number of runs per form factor"
+        description: "Number of runs per form factor (median is used)"
         required: false
         default: "3"
         type: string
@@ -19,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out repo (not strictly needed, but nice to have)
+      - name: Check out repo
         uses: actions/checkout@v4
 
       - name: Set up Node
@@ -30,71 +29,86 @@ jobs:
       - name: Install Lighthouse CI CLI
         run: npm i -g @lhci/cli@0.14.x
 
-      - name: Create output folder
-        run: mkdir -p ./lhci_reports
+      - name: Prepare output directory
+        run: mkdir -p lhci_reports
 
-      # --- Desktop run ---
-      - name: LHCI collect (desktop)
+      # ===== Desktop =====
+      - name: Collect (desktop) – HTML + JSON
         run: |
+          set -euo pipefail
           lhci collect \
             --url="${{ inputs.url }}" \
             --numberOfRuns=${{ inputs.runs }} \
             --settings.preset=desktop \
-            --output-path=./lhci_reports/desktop.lhr.json \
-            --json
-      - name: LHCI upload (desktop)
+            --output html --output json \
+            --output-path=./lhci_reports/desktop.report.html \
+            --json=./lhci_reports/desktop.lhr.json
+
+      - name: Upload to temp public storage (desktop)
         id: upload_desktop
         run: |
           set -euo pipefail
-          OUT="$(lhci upload --target=temporary-public-storage --json=./lhci_reports/desktop.lhr.json)"
+          OUT="$(lhci upload --target=temporary-public-storage --json=./lhci_reports/desktop.lhr.json || true)"
           echo "$OUT"
-          # Grab the last URL printed by LHCI (the shareable report link)
-          URL="$(echo "$OUT" | grep -Eo 'https?://[^ ]+' | tail -n1)"
+          # Extract the last URL LHCI prints (if available)
+          URL="$(echo "$OUT" | grep -Eo 'https?://[^ ]+' | tail -n1 || true)"
           echo "REPORT_URL=$URL" >> "$GITHUB_OUTPUT"
 
-      # --- Mobile run ---
-      - name: LHCI collect (mobile)
+      # ===== Mobile =====
+      - name: Collect (mobile) – HTML + JSON
         run: |
+          set -euo pipefail
           lhci collect \
             --url="${{ inputs.url }}" \
             --numberOfRuns=${{ inputs.runs }} \
-            --settings.preset=mobile \
-            --output-path=./lhci_reports/mobile.lhr.json \
-            --json
-      - name: LHCI upload (mobile)
+            --settings.emulatedFormFactor=mobile \
+            --settings.throttlingMethod=simulate \
+            --output html --output json \
+            --output-path=./lhci_reports/mobile.report.html \
+            --json=./lhci_reports/mobile.lhr.json
+
+      - name: Upload to temp public storage (mobile)
         id: upload_mobile
         run: |
           set -euo pipefail
-          OUT="$(lhci upload --target=temporary-public-storage --json=./lhci_reports/mobile.lhr.json)"
+          OUT="$(lhci upload --target=temporary-public-storage --json=./lhci_reports/mobile.lhr.json || true)"
           echo "$OUT"
-          URL="$(echo "$OUT" | grep -Eo 'https?://[^ ]+' | tail -n1)"
+          URL="$(echo "$OUT" | grep -Eo 'https?://[^ ]+' | tail -n1 || true)"
           echo "REPORT_URL=$URL" >> "$GITHUB_OUTPUT"
 
-      # Optional: assert thresholds (tweak to your tolerance)
-      - name: LHCI assert
+      # (Optional) Assert thresholds — tune or remove || true to fail the build on low scores
+      - name: Assert thresholds
         run: |
+          set -euo pipefail
           lhci assert --assertions.preset "lighthouse:recommended" \
-            --assertions.categories:performance=error \
+            --assertions.categories:performance=warn \
             --assertions.categories:accessibility=warn \
-            --assertions.categories:seo=warn \
-            --assertions.categories:'best-practices'=warn || true
-          # ^ keep `|| true` if you don't want failures to fail the workflow
+            --assertions.categories:'best-practices'=warn \
+            --assertions.categories:seo=warn || true
 
-      - name: Upload artifacts (full reports)
+      - name: Upload artifacts (HTML + JSON)
         uses: actions/upload-artifact@v4
         with:
           name: lighthouse-reports
-          path: ./lhci_reports
+          path: lhci_reports
           retention-days: 7
 
-      - name: Summarize
+      - name: Summary
         run: |
           {
             echo "## Lighthouse reports"
             echo ""
             echo "- **URL:** ${{ inputs.url }}"
-            echo "- **Desktop report:** ${{ steps.upload_desktop.outputs.REPORT_URL }}"
-            echo "- **Mobile report:** ${{ steps.upload_mobile.outputs.REPORT_URL }}"
+            if [ -n "${{ steps.upload_desktop.outputs.REPORT_URL }}" ]; then
+              echo "- **Desktop report (public link):** ${{ steps.upload_desktop.outputs.REPORT_URL }}"
+            else
+              echo "- **Desktop report (HTML artifact):** \`lhci_reports/desktop.report.html\`"
+            fi
+            if [ -n "${{ steps.upload_mobile.outputs.REPORT_URL }}" ]; then
+              echo "- **Mobile report (public link):** ${{ steps.upload_mobile.outputs.REPORT_URL }}"
+            else
+              echo "- **Mobile report (HTML artifact):** \`lhci_reports/mobile.report.html\`"
+            fi
             echo ""
-            echo "Download full JSON reports from the artifacts in this run."
-          } >> $GITHUB_STEP_SUMMARY
+            echo "Download the **lighthouse-reports** artifact to view the HTML files if public links are missing."
+          } >> "$GITHUB_STEP_SUMMARY"
