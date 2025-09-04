@@ -45,9 +45,12 @@ jobs:
       - name: LHCI upload (desktop)
         id: upload_desktop
         run: |
-          set -e
-          URL=$(lhci upload --target=temporary-public-storage --json=./lhci_reports/desktop.lhr.json | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log(d.lhrUrl||'');")
-          echo "REPORT_URL=$URL" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          OUT="$(lhci upload --target=temporary-public-storage --json=./lhci_reports/desktop.lhr.json)"
+          echo "$OUT"
+          # Grab the last URL printed by LHCI (the shareable report link)
+          URL="$(echo "$OUT" | grep -Eo 'https?://[^ ]+' | tail -n1)"
+          echo "REPORT_URL=$URL" >> "$GITHUB_OUTPUT"
 
       # --- Mobile run ---
       - name: LHCI collect (mobile)
@@ -61,9 +64,11 @@ jobs:
       - name: LHCI upload (mobile)
         id: upload_mobile
         run: |
-          set -e
-          URL=$(lhci upload --target=temporary-public-storage --json=./lhci_reports/mobile.lhr.json | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log(d.lhrUrl||'');")
-          echo "REPORT_URL=$URL" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          OUT="$(lhci upload --target=temporary-public-storage --json=./lhci_reports/mobile.lhr.json)"
+          echo "$OUT"
+          URL="$(echo "$OUT" | grep -Eo 'https?://[^ ]+' | tail -n1)"
+          echo "REPORT_URL=$URL" >> "$GITHUB_OUTPUT"
 
       # Optional: assert thresholds (tweak to your tolerance)
       - name: LHCI assert
